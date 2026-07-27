@@ -12,6 +12,9 @@ from Products.Five import BrowserView
 from zope.interface import alsoProvides
 
 from contentimport.interfaces import IContentimportLayer
+from contentimport.post_migration import (backfill_news_room_tiles,
+                                          backfill_opportunita_bandi,
+                                          create_homepages)
 
 logger = getLogger(__name__)
 
@@ -92,6 +95,11 @@ class ImportAll(BrowserView):
         reset_last_modified_by = api.content.get_view("reset_last_modified_by", portal, request)
         reset_last_modified_by()
         transaction.commit()
+
+        # Post-migration steps
+        create_homepages(portal)
+        backfill_news_room_tiles(portal)
+        backfill_opportunita_bandi(portal)
 
         return request.response.redirect(portal.absolute_url())
 
