@@ -16,16 +16,33 @@ class ResetLastModifiedBy(BrowserView):
 
         portal = api.portal.get()
 
-        portal.ZopeFindAndApply(portal, search_sub=True, apply_func=reset_modifier)
-        msg = "Finished resetting last modified by."
+        stats = {"restored": 0}
+
+        def apply_func(obj, path):
+            if reset_modifier(obj, path):
+                stats["restored"] += 1
+
+        portal.ZopeFindAndApply(portal, search_sub=True, apply_func=apply_func)
+        msg = f"Finished resetting last modified by on {stats['restored']} objects."
         logger.info(msg)
         api.portal.show_message(msg, self.request)
         return self.index()
 
 
 def reset_modifier(obj, path):
+    """Restore the last modifier exported with the content.
+
+    Subscribers set last_modified_by to the importing user on every add/modify
+    event, so import_content stashes the exported value on
+    last_modifier_migrated for this pass to apply.
+    """
     last_modifier = getattr(obj.aq_base, "last_modifier_migrated", None)
-    if last_modifier and last_modifier != getattr(obj, "modification_date", None):
-        obj.last_modified_by = last_modifier
-        del obj.last_modified_by
-        obj.reindexObject(idxs=["last_modified_by"])
+    if not last_modifier:
+        return False
+    del obj.last_modifier_migrated
+    # aq_base: without it a parent's value would be read through acquisition
+    if last_modifier == getattr(obj.aq_base, "last_modified_by", None):
+        return False
+    obj.last_modified_by = last_modifier
+    obj.reindexObject(idxs=["last_modified_by"])
+    return True
