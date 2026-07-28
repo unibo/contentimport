@@ -51,7 +51,7 @@ class ImportAll(BrowserView):
         view = api.content.get_view("import_content", portal, request)
         request.form["form.submitted"] = True
         request.form["commit"] = 500
-        request.form["handle_existing_content"] = 2  # 0 skip 1 replace 2 update
+        request.form["handle_existing_content"] = 0  # 0 skip 1 replace 2 update
         view(server_file="dipartimenti.json", return_json=True)
         transaction.commit()
 
@@ -92,7 +92,9 @@ class ImportAll(BrowserView):
         reset_dates()
         transaction.commit()
 
-        reset_last_modified_by = api.content.get_view("reset_last_modified_by", portal, request)
+        reset_last_modified_by = api.content.get_view(
+            "reset_last_modified_by", portal, request
+        )
         reset_last_modified_by()
         transaction.commit()
 
@@ -128,7 +130,9 @@ class ImportAll(BrowserView):
                 try:
                     obj = brain.getObject()
                 except Exception:
-                    logger.warning(f"Could not get object for brain {brain.getPath()}, skipping")
+                    logger.warning(
+                        f"Could not get object for brain {brain.getPath()}, skipping"
+                    )
                     continue
                 ILanguage(obj).set_language(lrf_lang)
                 obj.reindexObject(idxs=["Language"])
@@ -169,7 +173,9 @@ def img_variant_fixer(text, obj=None):
         return text
 
     picture_variants = api.portal.get_registry_record("plone.picture_variants")
-    scale_variant_mapping = {k: v["sourceset"][0]["scale"] for k, v in picture_variants.items()}
+    scale_variant_mapping = {
+        k: v["sourceset"][0]["scale"] for k, v in picture_variants.items()
+    }
     scale_variant_mapping["thumb"] = "mini"
     fallback_variant = "preview"
 
