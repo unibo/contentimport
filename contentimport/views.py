@@ -19,6 +19,8 @@ from contentimport.post_migration import (backfill_news_room_tiles,
 logger = getLogger(__name__)
 
 LDAP_PLUGIN_ID = "pasldap"
+# persistent attribute on the plugin, so a crashed import can be recovered
+DEACTIVATED_ATTR = "_contentimport_deactivated_for"
 
 
 def deactivate_ldap_plugin(portal):
@@ -29,12 +31,13 @@ def deactivate_ldap_plugin(portal):
     the whole (hours long) request, which is slow and starts failing silently
     once that connection gets dropped.
 
-    Returns the ``(plugin_type, position)`` pairs to pass to
-    ``activate_ldap_plugin``.
+    The plugin types it was active for are recorded on the plugin itself: if
+    the import dies the site must not be left without LDAP just because the
+    list only existed in the failed request.
     """
     pas = portal.acl_users
     if LDAP_PLUGIN_ID not in pas.objectIds():
-        return []
+        return
 
     registry = pas.plugins
     deactivated = []
@@ -42,16 +45,40 @@ def deactivate_ldap_plugin(portal):
         plugin_type = info["interface"]
         plugin_ids = registry.listPluginIds(plugin_type)
         if LDAP_PLUGIN_ID in plugin_ids:
-            deactivated.append((plugin_type, plugin_ids.index(LDAP_PLUGIN_ID)))
+            deactivated.append(
+                (plugin_type.__identifier__, plugin_ids.index(LDAP_PLUGIN_ID))
+            )
             registry.deactivatePlugin(plugin_type, LDAP_PLUGIN_ID)
+    if deactivated:
+        setattr(pas[LDAP_PLUGIN_ID], DEACTIVATED_ATTR, tuple(deactivated))
     logger.info(f"Deactivated {LDAP_PLUGIN_ID} for {len(deactivated)} plugin types")
-    return deactivated
 
 
-def activate_ldap_plugin(portal, deactivated):
-    """Re-activate the LDAP plugin, restoring its original position."""
-    registry = portal.acl_users.plugins
-    for plugin_type, position in deactivated:
+def activate_ldap_plugin(portal):
+    """Re-activate the LDAP plugin, restoring its original position.
+
+    Reads what to restore from the plugin, so it also repairs a site left
+    with LDAP off by an import that crashed before this ran.
+    """
+    pas = portal.acl_users
+    if LDAP_PLUGIN_ID not in pas.objectIds():
+        return
+
+    plugin = pas[LDAP_PLUGIN_ID]
+    deactivated = getattr(plugin.aq_base, DEACTIVATED_ATTR, ())
+    if not deactivated:
+        return
+
+    registry = pas.plugins
+    plugin_types = {
+        info["interface"].__identifier__: info["interface"]
+        for info in registry.listPluginTypeInfo()
+    }
+    for name, position in deactivated:
+        plugin_type = plugin_types.get(name)
+        if plugin_type is None:
+            logger.warning(f"Unknown plugin type {name}, cannot reactivate")
+            continue
         plugin_ids = registry.listPluginIds(plugin_type)
         if LDAP_PLUGIN_ID in plugin_ids:
             continue
@@ -59,8 +86,8 @@ def activate_ldap_plugin(portal, deactivated):
         # activatePlugin appends, so move it back where it was
         for _ in range(len(plugin_ids) - position):
             registry.movePluginsUp(plugin_type, [LDAP_PLUGIN_ID])
-    if deactivated:
-        logger.info(f"Reactivated {LDAP_PLUGIN_ID} for {len(deactivated)} plugin types")
+    delattr(plugin, DEACTIVATED_ATTR)
+    logger.info(f"Reactivated {LDAP_PLUGIN_ID} for {len(deactivated)} plugin types")
 
 
 class ImportAll(BrowserView):
@@ -73,20 +100,29 @@ class ImportAll(BrowserView):
         portal = api.portal.get()
         alsoProvides(request, IContentimportLayer)
 
-        deactivated_ldap = deactivate_ldap_plugin(portal)
+        deactivate_ldap_plugin(portal)
         transaction.commit()
         try:
-            return self._run_imports(portal, request)
-        finally:
-            # never let a restore failure mask the original error
-            try:
-                activate_ldap_plugin(portal, deactivated_ldap)
-                transaction.commit()
-            except Exception:
-                logger.exception(
-                    f"Could not reactivate {LDAP_PLUGIN_ID}, "
-                    "do it manually in acl_users/plugins"
-                )
+            result = self._run_imports(portal, request)
+        except Exception:
+            # a failed transaction refuses any further commit, so it has to go
+            # before the plugin can be restored
+            transaction.abort()
+            self._reactivate_ldap(portal)
+            raise
+        self._reactivate_ldap(portal)
+        return result
+
+    def _reactivate_ldap(self, portal):
+        # never let a restore failure mask the original error
+        try:
+            activate_ldap_plugin(portal)
+            transaction.commit()
+        except Exception:
+            logger.exception(
+                f"Could not reactivate {LDAP_PLUGIN_ID}, "
+                "do it manually in acl_users/plugins"
+            )
 
     def _run_imports(self, portal, request):
         cfg = getConfiguration()
