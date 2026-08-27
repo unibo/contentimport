@@ -1,9 +1,14 @@
 from logging import getLogger
 
+import transaction
 from plone import api
 from Products.Five import BrowserView
 
 logger = getLogger(__name__)
+
+# relstorage locks each modified object individually, so a whole-site
+# transaction exhausts the postgres lock pool
+COMMIT_EVERY = 500
 
 
 class ResetLastModifiedBy(BrowserView):
@@ -19,8 +24,12 @@ class ResetLastModifiedBy(BrowserView):
         stats = {"restored": 0}
 
         def apply_func(obj, path):
-            if reset_modifier(obj, path):
-                stats["restored"] += 1
+            if not reset_modifier(obj, path):
+                return
+            stats["restored"] += 1
+            if not stats["restored"] % COMMIT_EVERY:
+                logger.info("Committing after %d resets", stats["restored"])
+                transaction.commit()
 
         portal.ZopeFindAndApply(portal, search_sub=True, apply_func=apply_func)
         msg = f"Finished resetting last modified by on {stats['restored']} objects."

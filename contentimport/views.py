@@ -21,6 +21,9 @@ logger = getLogger(__name__)
 LDAP_PLUGIN_ID = "pasldap"
 # persistent attribute on the plugin, so a crashed import can be recovered
 DEACTIVATED_ATTR = "_contentimport_deactivated_for"
+# relstorage locks each modified object individually, so a whole-site
+# transaction exhausts the postgres lock pool
+COMMIT_EVERY = 500
 
 
 def deactivate_ldap_plugin(portal):
@@ -232,6 +235,9 @@ class ImportAll(BrowserView):
                 ILanguage(obj).set_language(lrf_lang)
                 obj.reindexObject(idxs=["Language"])
                 fixed += 1
+                if not fixed % COMMIT_EVERY:
+                    logger.info("Committing after %d language fixes", fixed)
+                    transaction.commit()
         logger.info("Fixed language attribute on %d objects", fixed)
 
 
