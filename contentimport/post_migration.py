@@ -12,6 +12,7 @@ from logging import getLogger
 import transaction
 from plone import api
 from plone.app.multilingual.interfaces import ITranslationManager
+from unibo.dipartimenti.subscribers.tiles import add_tiles_homepage
 from unibo.tiles.utils import TilesFactory
 from zope.publisher.browser import TestRequest
 
@@ -84,6 +85,15 @@ def _link_translation(obj_it, obj_en):
         logger.info("Traduzione EN già collegata a IT per %s", obj_it.absolute_url())
 
 
+def _populate_tiles_if_empty(homepage):
+    """Add the default tiles to a homepage that has none, e.g. one created by a
+    previous run when the subscriber was still skipped during the import."""
+    if any(getattr(homepage, f, None) for f in ("head_tiles", "content_tiles")):
+        return
+    add_tiles_homepage(homepage, None)
+    logger.info("Tile di default create in %s", homepage.absolute_url())
+
+
 def _create_homepages_for_site(lang_folder_it, lang_folder_en):
     """Create homepage objects in a single SiteContainer's language folders."""
     homepage_it = lang_folder_it.get(HOMEPAGE_ID)
@@ -133,6 +143,8 @@ def _create_homepages_for_site(lang_folder_it, lang_folder_en):
         logger.info("Titolo homepage EN aggiornato in %s", lang_folder_en.absolute_url())
 
     _link_translation(homepage_it, homepage_en)
+    _populate_tiles_if_empty(homepage_it)
+    _populate_tiles_if_empty(homepage_en)
     _publish_and_immutable(homepage_it, label="Homepage IT")
     _publish_and_immutable(homepage_en, label="Homepage EN")
     homepage_it.reindexObject()
